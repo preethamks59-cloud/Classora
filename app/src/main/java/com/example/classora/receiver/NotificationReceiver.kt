@@ -10,6 +10,7 @@ import android.content.Intent
 import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.classora.MainActivity
 import com.example.classora.data.NotificationItem
@@ -30,17 +31,24 @@ class NotificationReceiver : BroadcastReceiver() {
         if (action == "ACTION_MARK_COMPLETED" && taskId.isNotEmpty()) {
             val notificationId = intent.getIntExtra("notificationId", -1)
             val taskPreferences = TaskPreferences(context)
+            val pendingResult = goAsync()
             
             CoroutineScope(Dispatchers.IO).launch {
-                val tasks = taskPreferences.tasksFlow.first()
-                val task = tasks.find { it.id == taskId }
-                if (task != null) {
-                    taskPreferences.saveTask(task.copy(isCompleted = true))
-                    NotificationScheduler.cancelNotification(context, taskId)
-                }
-                if (notificationId != -1) {
-                    val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                    notificationManager.cancel(notificationId)
+                try {
+                    val tasks = taskPreferences.tasksFlow.first()
+                    val task = tasks.find { it.id == taskId }
+                    if (task != null) {
+                        taskPreferences.saveTask(task.copy(isCompleted = true))
+                        NotificationScheduler.cancelNotification(context, taskId)
+                    }
+                    if (notificationId != -1) {
+                        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                        notificationManager.cancel(notificationId)
+                    }
+                } catch (e: Exception) {
+                    Log.e("NotificationReceiver", "Error marking completed", e)
+                } finally {
+                    pendingResult.finish()
                 }
             }
             return
@@ -51,120 +59,135 @@ class NotificationReceiver : BroadcastReceiver() {
         val repeatType = intent.getStringExtra("repeatType") ?: "Does not repeat"
         val type = intent.getStringExtra("type") ?: "task"
 
-        // Save to notification history and update unread flag
         val notificationPrefs = NotificationPreferences(context)
         val userPrefs = UserPreferences(context)
         val settingsPrefs = com.example.classora.data.SettingsPreferences(context)
 
+        val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
-            val settings = settingsPrefs.settingsFlow.first()
-            if (settings.notificationsEnabled) {
-                showNotification(context, title, message, taskId, repeatType, type)
-            }
+            try {
+                val settings = settingsPrefs.settingsFlow.first()
+                if (settings.notificationsEnabled) {
+                    showNotification(context, title, message, taskId, repeatType, type)
+                }
 
-            notificationPrefs.saveNotification(
-                NotificationItem(
-                    taskId = taskId,
-                    title = title,
-                    message = message
+                notificationPrefs.saveNotification(
+                    NotificationItem(
+                        taskId = taskId,
+                        title = title,
+                        message = message
+                    )
                 )
-            )
-            userPrefs.setHasUnreadNotifications(true)
-            
-            // If it's a recurring task, schedule the next one
-            if (repeatType != "Does not repeat" && taskId.isNotEmpty()) {
-                NotificationScheduler.scheduleNextOccurrence(context, taskId, title, message, repeatType)
+                userPrefs.setHasUnreadNotifications(true)
+                
+                if (repeatType != "Does not repeat" && taskId.isNotEmpty()) {
+                    NotificationScheduler.scheduleNextOccurrence(context, taskId, title, message, repeatType)
+                }
+            } catch (e: Exception) {
+                Log.e("NotificationReceiver", "Error processing notification", e)
+            } finally {
+                pendingResult.finish()
             }
         }
     }
 
     private fun showNotification(context: Context, title: String, message: String, taskId: String, repeatType: String, type: String = "task") {
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val channelId = "classora_alerts_v11" // Unique ID to force system settings update
-        val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-        
-        val notificationId = if (taskId.isNotEmpty()) Math.abs(taskId.hashCode()) else Math.abs(System.currentTimeMillis().toInt())
+        try {
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val channelId = "classora_alerts_v11"
+            val soundUri = try { RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION) } catch (e: Exception) { null }
+            
+            val notificationId = if (taskId.isNotEmpty()) Math.abs(taskId.hashCode()) else Math.abs((System.currentTimeMillis() + (1000..9999).random()).toInt())
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val audioAttributes = AudioAttributes.Builder()
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
-                .build()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val audioAttributes = AudioAttributes.Builder()
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                    .build()
 
-            val channel = NotificationChannel(
-                channelId,
-                "Reminders & Alerts",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Urgent alerts for tasks and attendance"
-                enableLights(true)
-                lightColor = android.graphics.Color.BLUE
-                enableVibration(true)
-                vibrationPattern = longArrayOf(0, 500, 250, 500)
-                setSound(soundUri, audioAttributes)
-                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-                setShowBadge(true)
+                val channel = NotificationChannel(
+                    channelId,
+                    "Reminders & Alerts",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "Urgent alerts for tasks and attendance"
+                    enableLights(true)
+                    lightColor = android.graphics.Color.BLUE
+                    enableVibration(true)
+                    vibrationPattern = longArrayOf(0, 500, 250, 500)
+                    if (soundUri != null) {
+                        try { setSound(soundUri, audioAttributes) } catch (e: Exception) { Log.e("NotificationReceiver", "Sound set failed", e) }
+                    }
+                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                    setShowBadge(true)
+                }
+                notificationManager.createNotificationChannel(channel)
             }
-            notificationManager.createNotificationChannel(channel)
-        }
 
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            putExtra("action", if (type == "info") "VIEW_NOTIFICATIONS" else "VIEW_TASK")
-            putExtra("taskId", taskId)
-        }
-        
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            notificationId,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val builder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(com.example.classora.R.mipmap.ic_launcher)
-            .setContentTitle(title)
-            .setContentText(message)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(if (type == "info") NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_ALARM)
-            .setSound(soundUri)
-            .setVibrate(longArrayOf(0, 500, 250, 500))
-            .setDefaults(Notification.DEFAULT_ALL)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
-
-        // Only add action buttons for regular tasks, NOT for info notifications
-        if (type != "info") {
-            val completeIntent = Intent(context, NotificationReceiver::class.java).apply {
-                action = "ACTION_MARK_COMPLETED"
-                putExtra("taskId", taskId)
-                putExtra("notificationId", notificationId)
-            }
-            val completePendingIntent = PendingIntent.getBroadcast(
-                context,
-                notificationId + 1,
-                completeIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val rescheduleIntent = Intent(context, MainActivity::class.java).apply {
+            val intent = Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                putExtra("action", "RESCHEDULE_TASK")
+                putExtra("action", if (type == "info") "VIEW_NOTIFICATIONS" else "VIEW_TASK")
                 putExtra("taskId", taskId)
             }
-            val reschedulePendingIntent = PendingIntent.getActivity(
+            
+            val pendingIntent = PendingIntent.getActivity(
                 context,
-                notificationId + 2,
-                rescheduleIntent,
+                notificationId,
+                intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            builder.addAction(android.R.drawable.ic_menu_edit, "Reschedule", reschedulePendingIntent)
-            builder.addAction(android.R.drawable.ic_input_add, "Mark Completed", completePendingIntent)
-        }
+            val builder = NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(com.example.classora.R.mipmap.ic_launcher)
+                .setContentTitle(title)
+                .setContentText(message)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setCategory(if (type == "info") NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_ALARM)
+                .setVibrate(longArrayOf(0, 500, 250, 500))
+                .setDefaults(Notification.DEFAULT_ALL)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
 
-        notificationManager.notify(notificationId, builder.build())
+            if (soundUri != null) {
+                try { builder.setSound(soundUri) } catch (e: Exception) { Log.e("NotificationReceiver", "Builder setSound failed", e) }
+            }
+
+            if (type != "info") {
+                val reqCodeComplete = Math.abs((taskId + "_complete").hashCode())
+                val completeIntent = Intent(context, NotificationReceiver::class.java).apply {
+                    action = "ACTION_MARK_COMPLETED"
+                    putExtra("taskId", taskId)
+                    putExtra("notificationId", notificationId)
+                }
+                val completePendingIntent = PendingIntent.getBroadcast(
+                    context,
+                    reqCodeComplete,
+                    completeIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+                val reqCodeReschedule = Math.abs((taskId + "_reschedule").hashCode())
+                val rescheduleIntent = Intent(context, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    putExtra("action", "RESCHEDULE_TASK")
+                    putExtra("taskId", taskId)
+                }
+                val reschedulePendingIntent = PendingIntent.getActivity(
+                    context,
+                    reqCodeReschedule,
+                    rescheduleIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+                builder.addAction(android.R.drawable.ic_menu_edit, "Reschedule", reschedulePendingIntent)
+                builder.addAction(android.R.drawable.ic_input_add, "Mark Completed", completePendingIntent)
+            }
+
+            notificationManager.notify(notificationId, builder.build())
+        } catch (e: Exception) {
+            Log.e("NotificationReceiver", "Error displaying notification", e)
+        }
     }
 }

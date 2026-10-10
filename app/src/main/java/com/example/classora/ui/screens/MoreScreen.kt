@@ -52,7 +52,7 @@ fun MoreScreen(
     val context = LocalContext.current
     val userPreferences = remember { UserPreferences(context) }
     val userData by userPreferences.userFlow.collectAsState(initial = UserData("", "", "", "", "", ""))
-    
+
     var clickCount by remember { mutableStateOf(0) }
 
     Column(
@@ -60,7 +60,8 @@ fun MoreScreen(
             .fillMaxSize()
             .background(Color.White)
             .statusBarsPadding()
-            .padding(16.dp)
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 16.dp)
             .verticalScroll(rememberScrollState())
     ) {
         Row(
@@ -68,59 +69,83 @@ fun MoreScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Settings", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+            Text("Settings & More", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, color = Color(0xFF0D1724))
             IconButton(onClick = onClose) {
-                Icon(Icons.Default.Close, contentDescription = "Close")
+                Icon(Icons.Default.Close, contentDescription = "Close", tint = Color(0xFF0D1724))
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F7F9))
+        ) {
+            Row(
                 modifier = Modifier
-                    .size(60.dp)
-                    .clip(CircleShape)
-                    .background(Color.White)
-                    .padding(2.dp)
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                ProfileImage(
-                    uriString = userData.profileImageUri,
-                    userName = userData.name,
-                    fontSize = 24.sp,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-            Spacer(modifier = Modifier.width(16.dp))
-            Column {
-                Text(userData.name.ifEmpty { "Enter Name" }, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text("Student", fontSize = 14.sp, color = Color.Gray)
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(Color.White)
+                        .padding(2.dp)
+                ) {
+                    ProfileImage(
+                        uriString = userData.profileImageUri,
+                        userName = userData.name,
+                        fontSize = 22.sp,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        userData.name.ifEmpty { "Classora User" },
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0D1724),
+                        maxLines = 1
+                    )
+                    Text("Student Account", fontSize = 13.sp, color = Color.Gray)
+                }
             }
         }
 
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(24.dp))
+        Text("GENERAL SETTINGS", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2196F3), letterSpacing = 1.sp)
+        Spacer(modifier = Modifier.height(12.dp))
 
         SettingsItem(Icons.Default.Notifications, "Notifications", "Manage your notifications & alerts", onClick = onNavigateToNotifications)
-        SettingsItem(Icons.Default.AccessTime, "Reminder Settings", "Set reminders & get timely alerts", onClick = onNavigateToReminders)
-        SettingsItem(Icons.Default.DoNotDisturbOn, "Automatic DND / Silent Mode", "Focus without distractions", onClick = onNavigateToDnd)
+        SettingsItem(Icons.Default.AccessTime, "General Settings", "Set reminders & get timely alerts", onClick = onNavigateToReminders)
+        SettingsItem(Icons.Default.DoNotDisturbOn, "Automatic DND / Silent Mode", "Focus without distractions during class", onClick = onNavigateToDnd)
         SettingsItem(Icons.Default.CalendarToday, "Calendar Synchronization", "Sync your calendar & schedules", onClick = onNavigateToCalendarSync)
         SettingsItem(Icons.Default.Folder, "College Document Vault", "Securely store ID cards, receipts & certificates", onClick = onNavigateToDocumentVault)
 
         Spacer(modifier = Modifier.height(32.dp))
-        Text(
-            "Version 1.143.2",
-            fontSize = 12.sp,
-            color = Color.Gray,
-            modifier = Modifier
-                .align(Alignment.Start)
-                .clickable {
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                "Classora v1.143.2",
+                fontSize = 12.sp,
+                color = Color.Gray,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.clickable {
                     clickCount++
                     if (clickCount >= 7) {
                         clickCount = 0
                         onNavigateToAbout()
                     }
                 }
-        )
+            )
+        }
+        Spacer(modifier = Modifier.height(16.dp))
     }
 }
 

@@ -17,11 +17,14 @@ class SettingsPreferences(private val context: Context) {
         val AUTO_DND_ENABLED = booleanPreferencesKey("auto_dnd_enabled")
         val COLLEGE_START_TIME = androidx.datastore.preferences.core.stringPreferencesKey("college_start_time")
         val COLLEGE_END_TIME = androidx.datastore.preferences.core.stringPreferencesKey("college_end_time")
+        val COLLEGE_TIME_24_HOUR = booleanPreferencesKey("college_time_24_hour")
         val HAS_SKIPPED_SPECIAL_PERMISSIONS = booleanPreferencesKey("has_skipped_special_permissions")
         val DND_REPEAT_TYPE = androidx.datastore.preferences.core.stringPreferencesKey("dnd_repeat_type")
+        val TODAY_ONLY_DATE = androidx.datastore.preferences.core.stringPreferencesKey("today_only_date")
         val DND_DURING_EXAMS = booleanPreferencesKey("dnd_during_exams")
         val EXAM_DATES = androidx.datastore.preferences.core.stringPreferencesKey("exam_dates")
         val ALLOW_IMPORTANT_NOTIFS = booleanPreferencesKey("allow_important_notifs")
+        val USE_DND_WITH_SILENT_MODE = booleanPreferencesKey("use_dnd_with_silent_mode")
         
         // Notification Details
         val ATTENDANCE_ALERTS = booleanPreferencesKey("attendance_alerts")
@@ -51,6 +54,7 @@ class SettingsPreferences(private val context: Context) {
             autoDndEnabled = preferences[AUTO_DND_ENABLED] ?: false,
             collegeStartTime = preferences[COLLEGE_START_TIME] ?: "09:00",
             collegeEndTime = preferences[COLLEGE_END_TIME] ?: "16:00",
+            collegeTime24Hour = preferences[COLLEGE_TIME_24_HOUR] ?: false,
             hasSkippedSpecialPermissions = preferences[HAS_SKIPPED_SPECIAL_PERMISSIONS] ?: false,
             
             attendanceAlerts = preferences[ATTENDANCE_ALERTS] ?: true,
@@ -70,9 +74,11 @@ class SettingsPreferences(private val context: Context) {
             autoSync = preferences[AUTO_SYNC] ?: false,
             
             dndRepeatType = preferences[DND_REPEAT_TYPE] ?: "Weekdays",
+            todayOnlyDate = preferences[TODAY_ONLY_DATE] ?: "",
             dndDuringExams = preferences[DND_DURING_EXAMS] ?: false,
             examDates = preferences[EXAM_DATES] ?: "",
-            allowImportantNotifs = preferences[ALLOW_IMPORTANT_NOTIFS] ?: true
+            allowImportantNotifs = preferences[ALLOW_IMPORTANT_NOTIFS] ?: true,
+            useDndWithSilentMode = preferences[USE_DND_WITH_SILENT_MODE] ?: true
         )
     }
 
@@ -89,11 +95,23 @@ class SettingsPreferences(private val context: Context) {
     }
 
     suspend fun updateAutoDnd(enabled: Boolean) {
-        context.settingsDataStore.edit { it[AUTO_DND_ENABLED] = enabled }
+        context.settingsDataStore.edit { preferences ->
+            preferences[AUTO_DND_ENABLED] = enabled
+            if (enabled && (preferences[DND_REPEAT_TYPE] ?: "Weekdays") == "Today only") {
+                val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+                preferences[TODAY_ONLY_DATE] = todayStr
+            }
+        }
     }
 
     suspend fun updateDndRepeatType(type: String) {
-        context.settingsDataStore.edit { it[DND_REPEAT_TYPE] = type }
+        context.settingsDataStore.edit { preferences ->
+            preferences[DND_REPEAT_TYPE] = type
+            if (type == "Today only") {
+                val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+                preferences[TODAY_ONLY_DATE] = todayStr
+            }
+        }
     }
 
     suspend fun updateDndDuringExams(enabled: Boolean) {
@@ -108,12 +126,20 @@ class SettingsPreferences(private val context: Context) {
         context.settingsDataStore.edit { it[ALLOW_IMPORTANT_NOTIFS] = enabled }
     }
 
+    suspend fun updateUseDndWithSilentMode(enabled: Boolean) {
+        context.settingsDataStore.edit { it[USE_DND_WITH_SILENT_MODE] = enabled }
+    }
+
     suspend fun updateCollegeStartTime(time: String) {
         context.settingsDataStore.edit { it[COLLEGE_START_TIME] = time }
     }
 
     suspend fun updateCollegeEndTime(time: String) {
         context.settingsDataStore.edit { it[COLLEGE_END_TIME] = time }
+    }
+
+    suspend fun updateCollegeTime24Hour(enabled: Boolean) {
+        context.settingsDataStore.edit { it[COLLEGE_TIME_24_HOUR] = enabled }
     }
 
     suspend fun setHasSkippedSpecialPermissions(skipped: Boolean) {
@@ -165,6 +191,7 @@ data class AppSettings(
     val autoDndEnabled: Boolean = false,
     val collegeStartTime: String = "09:00",
     val collegeEndTime: String = "16:30",
+    val collegeTime24Hour: Boolean = false,
     val hasSkippedSpecialPermissions: Boolean = false,
     
     val attendanceAlerts: Boolean = true,
@@ -184,7 +211,9 @@ data class AppSettings(
     val autoSync: Boolean = false,
     
     val dndRepeatType: String = "Weekdays",
+    val todayOnlyDate: String = "",
     val dndDuringExams: Boolean = false,
     val examDates: String = "",
-    val allowImportantNotifs: Boolean = true
+    val allowImportantNotifs: Boolean = true,
+    val useDndWithSilentMode: Boolean = true
 )

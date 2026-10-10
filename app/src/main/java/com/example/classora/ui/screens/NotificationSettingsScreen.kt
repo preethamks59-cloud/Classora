@@ -24,6 +24,7 @@ import android.provider.Settings
 import android.net.Uri
 import androidx.core.content.ContextCompat
 import com.example.classora.data.SettingsPreferences
+import com.example.classora.ui.components.AppPermissionsSection
 import kotlinx.coroutines.launch
 
 @Composable

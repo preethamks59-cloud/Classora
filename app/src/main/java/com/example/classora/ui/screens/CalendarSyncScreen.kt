@@ -2,6 +2,7 @@ package com.example.classora.ui.screens
 
 import android.Manifest
 import android.content.ContentResolver
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
@@ -289,10 +290,13 @@ fun CalendarSyncScreen(onBack: () -> Unit) {
                         onClick = { 
                             scope.launch {
                                 isSyncing = true
-                                if (settings.syncTimetable) syncCalendarEvents(context.contentResolver, taskPreferences, selectedAccount!!)
-                                if (settings.autoSync) exportTasksToCalendar(context.contentResolver, taskPreferences, selectedAccount!!)
-                                isSyncing = false
-                                Toast.makeText(context, "Synchronization complete", Toast.LENGTH_SHORT).show()
+                                try {
+                                    if (settings.syncTimetable) syncCalendarEvents(context.contentResolver, taskPreferences, selectedAccount!!)
+                                    if (settings.autoSync) exportTasksToCalendar(context.contentResolver, taskPreferences, selectedAccount!!)
+                                    Toast.makeText(context, "Synchronization complete", Toast.LENGTH_SHORT).show()
+                                } finally {
+                                    isSyncing = false
+                                }
                             }
                         },
                         modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -343,6 +347,13 @@ private fun getCalendarAccounts(context: Context): List<String> {
     return accounts
 }
 
+private fun calendarInstancesUri(startMillis: Long, endMillis: Long): Uri {
+    val builder = CalendarContract.Instances.CONTENT_URI.buildUpon()
+    ContentUris.appendId(builder, startMillis)
+    ContentUris.appendId(builder, endMillis)
+    return builder.build()
+}
+
 private suspend fun fetchCalendarEventsForDate(contentResolver: ContentResolver, accountName: String, date: Calendar): List<Task> {
     val events = mutableListOf<Task>()
     
@@ -361,14 +372,19 @@ private suspend fun fetchCalendarEventsForDate(contentResolver: ContentResolver,
     val startOfDay = (date.clone() as Calendar).apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0) }.timeInMillis
     val endOfDay = (date.clone() as Calendar).apply { set(Calendar.HOUR_OF_DAY, 23); set(Calendar.MINUTE, 59); set(Calendar.SECOND, 59) }.timeInMillis
     
-    val selection = "${CalendarContract.Events.DTSTART} >= ? AND ${CalendarContract.Events.DTSTART} <= ? AND ${CalendarContract.Events.CALENDAR_ID} IN (${calendarIds.joinToString(",")})"
-    val selectionArgs = arrayOf(startOfDay.toString(), endOfDay.toString())
+    val selection = "${CalendarContract.Instances.CALENDAR_ID} IN (${calendarIds.joinToString(",")})"
     
-    val cursor = contentResolver.query(CalendarContract.Events.CONTENT_URI, arrayOf(CalendarContract.Events.TITLE, CalendarContract.Events.DTSTART, CalendarContract.Events.ALL_DAY), selection, selectionArgs, "${CalendarContract.Events.DTSTART} ASC")
+    val cursor = contentResolver.query(
+        calendarInstancesUri(startOfDay, endOfDay),
+        arrayOf(CalendarContract.Instances.TITLE, CalendarContract.Instances.BEGIN, CalendarContract.Instances.ALL_DAY),
+        selection,
+        null,
+        "${CalendarContract.Instances.BEGIN} ASC"
+    )
     cursor?.use {
-        val titleIdx = it.getColumnIndex(CalendarContract.Events.TITLE)
-        val startIdx = it.getColumnIndex(CalendarContract.Events.DTSTART)
-        val allDayIdx = it.getColumnIndex(CalendarContract.Events.ALL_DAY)
+        val titleIdx = it.getColumnIndex(CalendarContract.Instances.TITLE)
+        val startIdx = it.getColumnIndex(CalendarContract.Instances.BEGIN)
+        val allDayIdx = it.getColumnIndex(CalendarContract.Instances.ALL_DAY)
         while (it.moveToNext()) {
             val title = it.getString(titleIdx)
             val startTime = it.getLong(startIdx)
@@ -408,20 +424,19 @@ private suspend fun fetchCalendarEventsForRange(contentResolver: ContentResolver
     }.timeInMillis
     
     // Query calendars only for the selected account
-    val selection = "${CalendarContract.Events.DTSTART} >= ? AND ${CalendarContract.Events.DTSTART} <= ? AND ${CalendarContract.Events.CALENDAR_ID} IN (${calendarIds.joinToString(",")})"
-    val selectionArgs = arrayOf(rangeStart.toString(), rangeEnd.toString())
+    val selection = "${CalendarContract.Instances.CALENDAR_ID} IN (${calendarIds.joinToString(",")})"
     
     val cursor = contentResolver.query(
-        CalendarContract.Events.CONTENT_URI, 
-        arrayOf(CalendarContract.Events.TITLE, CalendarContract.Events.DTSTART, CalendarContract.Events.ALL_DAY), 
+        calendarInstancesUri(rangeStart, rangeEnd),
+        arrayOf(CalendarContract.Instances.TITLE, CalendarContract.Instances.BEGIN, CalendarContract.Instances.ALL_DAY),
         selection, 
-        selectionArgs, 
-        "${CalendarContract.Events.DTSTART} ASC"
+        null,
+        "${CalendarContract.Instances.BEGIN} ASC"
     )
     
     cursor?.use {
-        val titleIdx = it.getColumnIndex(CalendarContract.Events.TITLE)
-        val startIdx = it.getColumnIndex(CalendarContract.Events.DTSTART)
+        val titleIdx = it.getColumnIndex(CalendarContract.Instances.TITLE)
+        val startIdx = it.getColumnIndex(CalendarContract.Instances.BEGIN)
         while (it.moveToNext()) {
             val startTime = it.getLong(startIdx)
             val cal = Calendar.getInstance().apply { timeInMillis = startTime }
@@ -443,20 +458,66 @@ private suspend fun syncCalendarEvents(contentResolver: ContentResolver, taskPre
     calendarCursor?.use { while (it.moveToNext()) calendarIds.add(it.getLong(0)) }
     if (calendarIds.isEmpty()) return
 
-    val startMillis = Calendar.getInstance().timeInMillis
-    val endMillis = startMillis + (30L * 24 * 60 * 60 * 1000)
-    val selection = "${CalendarContract.Events.DTSTART} >= ? AND ${CalendarContract.Events.DTSTART} <= ? AND ${CalendarContract.Events.CALENDAR_ID} IN (${calendarIds.joinToString(",")})"
-    val selectionArgs = arrayOf(startMillis.toString(), endMillis.toString())
-    val cursor = contentResolver.query(CalendarContract.Events.CONTENT_URI, arrayOf(CalendarContract.Events._ID, CalendarContract.Events.TITLE, CalendarContract.Events.DTSTART, CalendarContract.Events.DESCRIPTION), selection, selectionArgs, "${CalendarContract.Events.DTSTART} ASC")
+    val startMillis = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+    val endMillis = Calendar.getInstance().apply {
+        timeInMillis = startMillis
+        add(Calendar.DAY_OF_YEAR, 30)
+        set(Calendar.HOUR_OF_DAY, 23)
+        set(Calendar.MINUTE, 59)
+        set(Calendar.SECOND, 59)
+        set(Calendar.MILLISECOND, 999)
+    }.timeInMillis
+    val selection = "${CalendarContract.Instances.CALENDAR_ID} IN (${calendarIds.joinToString(",")})"
+    val cursor = contentResolver.query(
+        calendarInstancesUri(startMillis, endMillis),
+        arrayOf(
+            CalendarContract.Instances.EVENT_ID,
+            CalendarContract.Instances.TITLE,
+            CalendarContract.Instances.BEGIN,
+            CalendarContract.Instances.ALL_DAY,
+            CalendarContract.Instances.DESCRIPTION
+        ),
+        selection,
+        null,
+        "${CalendarContract.Instances.BEGIN} ASC"
+    )
     val existingTasks = taskPreferences.tasksFlow.first()
     cursor?.use {
-        val idIdx = it.getColumnIndex(CalendarContract.Events._ID); val titleIdx = it.getColumnIndex(CalendarContract.Events.TITLE); val startIdx = it.getColumnIndex(CalendarContract.Events.DTSTART); val descIdx = it.getColumnIndex(CalendarContract.Events.DESCRIPTION)
+        val idIdx = it.getColumnIndex(CalendarContract.Instances.EVENT_ID)
+        val titleIdx = it.getColumnIndex(CalendarContract.Instances.TITLE)
+        val startIdx = it.getColumnIndex(CalendarContract.Instances.BEGIN)
+        val allDayIdx = it.getColumnIndex(CalendarContract.Instances.ALL_DAY)
+        val descIdx = it.getColumnIndex(CalendarContract.Instances.DESCRIPTION)
         while (it.moveToNext()) {
-            val eventId = it.getString(idIdx); val title = it.getString(titleIdx); val startTime = it.getLong(startIdx); val desc = it.getString(descIdx) ?: ""
-            val externalId = "calendar_${accountName}_$eventId"
-            if (existingTasks.any { it.externalId == externalId }) continue
+            val eventId = it.getString(idIdx)
+            val startTime = it.getLong(startIdx)
+            val eventDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(startTime))
+            val externalId = "calendar_${accountName}_${eventId}_$startTime"
+            val legacyExternalId = "calendar_${accountName}_$eventId"
+            if (existingTasks.any {
+                    it.externalId == externalId ||
+                        (it.externalId == legacyExternalId && it.date == eventDate)
+                }) continue
             val cal = Calendar.getInstance().apply { timeInMillis = startTime }
-            taskPreferences.saveTask(Task(title = title, description = desc, date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(cal.time), time = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(cal.time), category = "Imported", priority = "Medium", externalId = externalId))
+            val isAllDay = it.getInt(allDayIdx) == 1
+            val title = it.getString(titleIdx) ?: "Untitled event"
+            val description = it.getString(descIdx) ?: ""
+            taskPreferences.saveTask(
+                Task(
+                    title = title,
+                    description = description,
+                    date = eventDate,
+                    time = if (isAllDay) "" else SimpleDateFormat("hh:mm a", Locale.getDefault()).format(cal.time),
+                    category = "Imported",
+                    priority = "Medium",
+                    externalId = externalId
+                )
+            )
         }
     }
 }

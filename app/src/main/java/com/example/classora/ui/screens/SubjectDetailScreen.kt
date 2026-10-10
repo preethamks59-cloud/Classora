@@ -35,8 +35,10 @@ fun SubjectDetailScreen(
     val attendanceRecords by attendancePreferences.attendanceFlow.collectAsState(initial = emptyList())
     
     val subjectRecords = remember(attendanceRecords, subjectName, versionId) {
-        attendanceRecords.filter { it.subject == subjectName && (it.timetableVersionId == versionId || versionId == "null") }
-            .sortedByDescending { it.date }
+        attendanceRecords.filter { 
+            it.subject.trim().equals(subjectName.trim(), ignoreCase = true) && 
+            (it.timetableVersionId == versionId || versionId == "null" || it.timetableVersionId == null) 
+        }.sortedByDescending { it.date }
     }
 
     val presentCount = subjectRecords.count { it.isPresent }

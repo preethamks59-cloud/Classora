@@ -20,7 +20,8 @@ object NotificationScheduler {
         message: String,
         date: String, // YYYY-MM-DD
         time: String, // HH:mm AM/PM
-        repeatType: String
+        repeatType: String,
+        reminder: String = "None"
     ) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         
@@ -32,6 +33,14 @@ object NotificationScheduler {
             if (dateObj != null) {
                 calendar.time = dateObj
                 
+                // Subtract reminder offset if specified
+                when (reminder) {
+                    "5 mins before" -> calendar.add(Calendar.MINUTE, -5)
+                    "15 mins before" -> calendar.add(Calendar.MINUTE, -15)
+                    "30 mins before" -> calendar.add(Calendar.MINUTE, -30)
+                    "1 hour before" -> calendar.add(Calendar.MINUTE, -60)
+                }
+
                 if (calendar.timeInMillis <= System.currentTimeMillis()) {
                     if (repeatType == "Everyday") {
                         calendar.add(Calendar.DAY_OF_YEAR, 1)
@@ -151,7 +160,7 @@ object NotificationScheduler {
 
     fun showLowAttendanceNotification(context: Context, percentage: Float) {
         val intent = Intent(context, NotificationReceiver::class.java).apply {
-            putExtra("taskId", "low_attendance_alert")
+            putExtra("taskId", "low_attendance_${System.currentTimeMillis()}_${(1000..9999).random()}")
             putExtra("title", "Low Attendance Alert!")
             putExtra("message", "Please attend classes, your attendance is only ${String.format("%.1f", percentage)}%!")
         }
@@ -160,7 +169,7 @@ object NotificationScheduler {
 
     fun showInfoNotification(context: Context, title: String, message: String) {
         val intent = Intent(context, NotificationReceiver::class.java).apply {
-            putExtra("taskId", "info_update_${System.currentTimeMillis()}")
+            putExtra("taskId", "info_update_${System.currentTimeMillis()}_${UUID.randomUUID()}")
             putExtra("title", title)
             putExtra("message", message)
             putExtra("type", "info")

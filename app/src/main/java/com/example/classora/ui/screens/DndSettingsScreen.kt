@@ -35,6 +35,9 @@ import com.example.classora.data.SettingsPreferences
 import com.example.classora.utils.DndScheduler
 import com.example.classora.ui.components.*
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -227,19 +230,24 @@ fun DndSettingsScreen(onBack: () -> Unit) {
                     label = "Enable Automatic Silent Mode", 
                     checked = settings.autoDndEnabled,
                     onCheckedChange = { enabled ->
+                        if (enabled && !hasDndPermission) {
+                            showDndPermissionDialog = true
+                            return@ToggleSettingItem
+                        }
                         if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
                             showAlarmPermissionDialog = true
                             return@ToggleSettingItem
                         }
                         scope.launch {
                             settingsPreferences.updateAutoDnd(enabled)
-                            if (enabled && hasDndPermission) {
+                            if (enabled) {
                                 DndScheduler.scheduleDnd(
                                     context = context, 
                                     startTime = settings.collegeStartTime, 
                                     endTime = settings.collegeEndTime, 
                                     activateImmediately = true,
-                                    repeatType = settings.dndRepeatType
+                                    repeatType = settings.dndRepeatType,
+                                    showUserToast = true
                                 )
                             } else {
                                 DndScheduler.cancelDnd(context)
@@ -273,7 +281,8 @@ fun DndSettingsScreen(onBack: () -> Unit) {
                                             startTime = settings.collegeStartTime, 
                                             endTime = settings.collegeEndTime, 
                                             activateImmediately = true,
-                                            repeatType = option
+                                            repeatType = option,
+                                            showUserToast = true
                                         )
                                     }
                                 } 
@@ -288,7 +297,28 @@ fun DndSettingsScreen(onBack: () -> Unit) {
                 }
                 
                 Spacer(modifier = Modifier.height(16.dp))
-                Text("College Schedule", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2196F3))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("College Schedule", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2196F3))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(false to "12-hour", true to "24-hour").forEach { (use24Hour, label) ->
+                            FilterChip(
+                                selected = settings.collegeTime24Hour == use24Hour,
+                                onClick = {
+                                    scope.launch { settingsPreferences.updateCollegeTime24Hour(use24Hour) }
+                                },
+                                label = { Text(label, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = Color(0xFF2196F3),
+                                    selectedLabelColor = Color.White
+                                )
+                            )
+                        }
+                    }
+                }
                 
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
@@ -296,7 +326,9 @@ fun DndSettingsScreen(onBack: () -> Unit) {
                 ) {
                     TimeSelectionItem(
                         label = "Morning Time",
-                        time = settings.collegeStartTime,
+                        time = formatCollegeTime(settings.collegeStartTime, settings.collegeTime24Hour),
+                        timeValue = settings.collegeStartTime,
+                        use24Hour = settings.collegeTime24Hour,
                         modifier = Modifier.weight(1f),
                         onTimeSelected = { newTime ->
                             scope.launch {
@@ -307,7 +339,8 @@ fun DndSettingsScreen(onBack: () -> Unit) {
                                         startTime = newTime, 
                                         endTime = settings.collegeEndTime, 
                                         activateImmediately = true,
-                                        repeatType = settings.dndRepeatType
+                                        repeatType = settings.dndRepeatType,
+                                        showUserToast = true
                                     )
                                 }
                             }
@@ -315,7 +348,9 @@ fun DndSettingsScreen(onBack: () -> Unit) {
                     )
                     TimeSelectionItem(
                         label = "Evening Time",
-                        time = settings.collegeEndTime,
+                        time = formatCollegeTime(settings.collegeEndTime, settings.collegeTime24Hour),
+                        timeValue = settings.collegeEndTime,
+                        use24Hour = settings.collegeTime24Hour,
                         modifier = Modifier.weight(1f),
                         onTimeSelected = { newTime ->
                             scope.launch {
@@ -326,14 +361,15 @@ fun DndSettingsScreen(onBack: () -> Unit) {
                                         startTime = settings.collegeStartTime, 
                                         endTime = newTime, 
                                         activateImmediately = true,
-                                        repeatType = settings.dndRepeatType
+                                        repeatType = settings.dndRepeatType,
+                                        showUserToast = true
                                     )
                                 }
                             }
                         }
                     )
                 }
-                
+
                 Text(
                     text = "* Phone will go silent 10 mins before morning time and return to normal 10 mins after evening time.",
                     fontSize = 12.sp,
@@ -366,8 +402,12 @@ fun DndSettingsScreen(onBack: () -> Unit) {
                         }
                     }
                     Switch(
-                        checked = settings.dndDuringExams, 
+                        checked = settings.dndDuringExams && hasDndPermission, 
                         onCheckedChange = { enabled -> 
+                            if (enabled && !hasDndPermission) {
+                                showDndPermissionDialog = true
+                                return@Switch
+                            }
                             scope.launch { 
                                 settingsPreferences.updateDndDuringExams(enabled)
                                 if (settings.autoDndEnabled && hasDndPermission) {
@@ -392,6 +432,22 @@ fun DndSettingsScreen(onBack: () -> Unit) {
                     label = "Allow important notifications", 
                     checked = settings.allowImportantNotifs, 
                     onCheckedChange = { scope.launch { settingsPreferences.updateAllowImportantNotifs(it) } }
+                )
+
+                ToggleSettingItem(
+                    label = "Use DND with Silent Mode", 
+                    checked = settings.useDndWithSilentMode, 
+                    onCheckedChange = { scope.launch { settingsPreferences.updateUseDndWithSilentMode(it) } }
+                )
+                
+                Text(
+                    text = if (settings.useDndWithSilentMode) 
+                        "* Phone will be fully silent (DND). Some calls might be hidden."
+                    else 
+                        "* Phone will be in Vibrate/Silent mode. You can still see who is calling.",
+                    fontSize = 12.sp,
+                    color = Color.Gray,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
                 )
             }
         }
@@ -461,7 +517,14 @@ fun DndSettingsScreen(onBack: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TimeSelectionItem(label: String, time: String, modifier: Modifier = Modifier, onTimeSelected: (String) -> Unit) {
+fun TimeSelectionItem(
+    label: String,
+    time: String,
+    timeValue: String,
+    use24Hour: Boolean,
+    modifier: Modifier = Modifier,
+    onTimeSelected: (String) -> Unit
+) {
     var showTimePicker by remember { mutableStateOf(false) }
     
     Column(modifier = modifier) {
@@ -476,11 +539,11 @@ fun TimeSelectionItem(label: String, time: String, modifier: Modifier = Modifier
     }
 
     if (showTimePicker) {
-        val timeParts = time.split(":")
+        val timeParts = timeValue.split(":")
         val timePickerState = rememberTimePickerState(
             initialHour = timeParts.getOrNull(0)?.toIntOrNull() ?: 9,
             initialMinute = timeParts.getOrNull(1)?.toIntOrNull() ?: 0,
-            is24Hour = false
+            is24Hour = use24Hour
         )
 
         AlertDialog(
@@ -502,6 +565,19 @@ fun TimeSelectionItem(label: String, time: String, modifier: Modifier = Modifier
             }
         )
     }
+}
+
+private fun formatCollegeTime(time: String, use24Hour: Boolean): String {
+    val parts = time.split(":")
+    val hour = parts.getOrNull(0)?.toIntOrNull() ?: 9
+    val minute = parts.getOrNull(1)?.toIntOrNull() ?: 0
+    if (use24Hour) return String.format(Locale.getDefault(), "%02d:%02d", hour, minute)
+
+    val calendar = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, hour)
+        set(Calendar.MINUTE, minute)
+    }
+    return SimpleDateFormat("h:mm a", Locale.getDefault()).format(calendar.time)
 }
 
 @Composable

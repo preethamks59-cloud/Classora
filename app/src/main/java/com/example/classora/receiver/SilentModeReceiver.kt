@@ -21,42 +21,41 @@ class SilentModeReceiver : BroadcastReceiver() {
         val action = intent.action
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val settingsPreferences = SettingsPreferences(context)
 
         when (action) {
             ACTION_SET_SILENT -> {
                 Log.d("SilentModeReceiver", "Attempting to silence phone")
-                val settingsPreferences = SettingsPreferences(context)
                 CoroutineScope(Dispatchers.IO).launch {
                     val settings = settingsPreferences.settingsFlow.first()
                     
-                    // Check if we should silence today based on regular DND or Exam DND
-                    val currentDow = Calendar.getInstance().get(Calendar.DAY_OF_WEEK)
-                    val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+                    val now = Calendar.getInstance()
+                    val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(now.time)
+                    val examDatesSet = settings.examDates.split(",").filter { it.isNotEmpty() }.toSet()
                     
-                    val isRegularDndDay = when(settings.dndRepeatType) {
-                        "Weekdays" -> currentDow != Calendar.SATURDAY && currentDow != Calendar.SUNDAY
-                        "Weekends" -> currentDow == Calendar.SATURDAY || currentDow == Calendar.SUNDAY
-                        "Everyday" -> true
-                        "Today only" -> true
-                        else -> true
-                    }
-                    
-                    val isExamDay = settings.dndDuringExams && 
-                            settings.examDates.split(",").contains(todayStr)
+                    val isExamDay = settings.dndDuringExams && examDatesSet.contains(todayStr)
+                    val isRegularDndDay = DndScheduler.isDndDay(now, settings.dndRepeatType, settings.dndDuringExams, examDatesSet, settings.todayOnlyDate)
 
-                    if (isRegularDndDay || isExamDay) {
+                    if (settings.autoDndEnabled && (isRegularDndDay || isExamDay)) {
                         try {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                if (notificationManager.isNotificationPolicyAccessGranted) {
-                                    audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
-                                    Log.d("SilentModeReceiver", "Ringer set to SILENT")
-                                } else {
-                                    audioManager.ringerMode = AudioManager.RINGER_MODE_VIBRATE
-                                    Log.d("SilentModeReceiver", "Ringer set to VIBRATE (No DND permission)")
-                                }
-                            } else {
-                                audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
+                            // 1. DND Interruption Filter (if option is enabled & permission granted)
+                            if (settings.useDndWithSilentMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && notificationManager.isNotificationPolicyAccessGranted) {
+                                notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_PRIORITY)
                             }
+
+                            // 2. ALWAYS set ringer mode to SILENT / VIBRATE
+                            if (settings.useDndWithSilentMode) {
+                                audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
+                            } else {
+                                audioManager.ringerMode = AudioManager.RINGER_MODE_VIBRATE
+                            }
+
+                            // 3. Mute ring and notification streams explicitly
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                audioManager.adjustStreamVolume(AudioManager.STREAM_RING, AudioManager.ADJUST_MUTE, 0)
+                                audioManager.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_MUTE, 0)
+                            }
+                            Log.d("SilentModeReceiver", "Silent mode & DND set successfully")
                         } catch (e: Exception) {
                             Log.e("SilentModeReceiver", "Failed to set silent mode", e)
                         }
@@ -67,30 +66,57 @@ class SilentModeReceiver : BroadcastReceiver() {
             }
             ACTION_SET_NORMAL -> {
                 Log.d("SilentModeReceiver", "Restoring normal mode")
-                try {
-                    // 1. Reset ringer mode to Normal
-                    audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+                CoroutineScope(Dispatchers.IO).launch {
+                    val settings = settingsPreferences.settingsFlow.first()
+                    val now = Calendar.getInstance()
+                    val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(now.time)
+                    val isExamDay = settings.dndDuringExams && settings.examDates.split(",").contains(todayStr)
                     
-                    // 2. Unmute streams explicitly
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        audioManager.adjustStreamVolume(AudioManager.STREAM_RING, AudioManager.ADJUST_UNMUTE, 0)
-                        audioManager.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_UNMUTE, 0)
-                        audioManager.adjustStreamVolume(AudioManager.STREAM_SYSTEM, AudioManager.ADJUST_UNMUTE, 0)
-                        
-                        // 3. Clear DND filter just in case it's lingering
-                        if (notificationManager.isNotificationPolicyAccessGranted) {
+                    val isEndOfExamDay = now.get(Calendar.HOUR_OF_DAY) == 23 && now.get(Calendar.MINUTE) >= 50
+                    
+                    if (settings.autoDndEnabled && isExamDay && !isEndOfExamDay) {
+                        Log.d("SilentModeReceiver", "Still exam day, skipping normal mode restoration")
+                        return@launch
+                    }
+
+                    try {
+                        // 1. Clear Do Not Disturb interruption filter FIRST on Android M+
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && notificationManager.isNotificationPolicyAccessGranted) {
                             notificationManager.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
                         }
+
+                        // 2. Reset ringer mode to Normal
+                        audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+                        
+                        // 3. Unmute volume streams explicitly
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            audioManager.adjustStreamVolume(AudioManager.STREAM_RING, AudioManager.ADJUST_UNMUTE, 0)
+                            audioManager.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, AudioManager.ADJUST_UNMUTE, 0)
+                            audioManager.adjustStreamVolume(AudioManager.STREAM_SYSTEM, AudioManager.ADJUST_UNMUTE, 0)
+                        }
+
+                        // 4. Ensure non-zero ring and notification volume
+                        val maxRing = audioManager.getStreamMaxVolume(AudioManager.STREAM_RING)
+                        val currentRing = audioManager.getStreamVolume(AudioManager.STREAM_RING)
+                        if (currentRing == 0) {
+                            audioManager.setStreamVolume(AudioManager.STREAM_RING, (maxRing * 0.7).toInt().coerceAtLeast(1), 0)
+                        }
+
+                        val maxNotif = audioManager.getStreamMaxVolume(AudioManager.STREAM_NOTIFICATION)
+                        val currentNotif = audioManager.getStreamVolume(AudioManager.STREAM_NOTIFICATION)
+                        if (currentNotif == 0) {
+                            audioManager.setStreamVolume(AudioManager.STREAM_NOTIFICATION, (maxNotif * 0.7).toInt().coerceAtLeast(1), 0)
+                        }
+
+                        Log.d("SilentModeReceiver", "Normal mode restored successfully")
+                    } catch (e: Exception) {
+                        Log.e("SilentModeReceiver", "Failed to restore normal mode", e)
                     }
-                    Log.d("SilentModeReceiver", "Normal mode restored successfully")
-                } catch (e: Exception) {
-                    Log.e("SilentModeReceiver", "Failed to restore normal mode", e)
                 }
             }
         }
 
-        // Always reschedule future DND alarms whenever one triggers to ensure everyday repetition
-        val settingsPreferences = SettingsPreferences(context)
+        // Always reschedule future DND alarms whenever one triggers
         CoroutineScope(Dispatchers.IO).launch {
             val settings = settingsPreferences.settingsFlow.first()
             if (settings.autoDndEnabled) {

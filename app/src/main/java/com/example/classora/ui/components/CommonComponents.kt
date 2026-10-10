@@ -1,5 +1,16 @@
 package com.example.classora.ui.components
 
+import android.Manifest
+import android.app.AlarmManager
+import android.app.NotificationManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -13,8 +24,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import android.content.Intent
-import android.net.Uri
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
@@ -33,6 +43,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.rememberAsyncImagePainter
 import com.example.classora.data.*
 import java.text.SimpleDateFormat
@@ -369,16 +383,14 @@ fun CalendarWidget(
                         val override = overrides.find { it.date == dateStr }
                         val dayOfWeekStr = override?.sourceDay ?: SimpleDateFormat("EEEE", Locale.getDefault()).format(dayCal.time)
                         val dayClasses = timetable.filter { entry ->
-                            val dayInput = entry.day.lowercase()
-                            val query = dayOfWeekStr.lowercase()
-                            dayInput.contains(query) || (query.length >= 3 && dayInput.contains(query.take(3)))
+                            com.example.classora.utils.CSVParser.matchesDay(entry.day, dayOfWeekStr, dayCal)
                         }
                         val dayRecords = attendanceRecords.filter { it.date == dateStr }
                         
                         val attendanceDotColor = if (showAttendanceDots && day.isCurrentMonth && dayClasses.isNotEmpty()) {
                             val totalClasses = dayClasses.size
                             val markedRecords = dayRecords.filter { record -> 
-                                dayClasses.any { it.subject == record.subject }
+                                dayClasses.any { it.subject.trim().equals(record.subject.trim(), ignoreCase = true) }
                             }
                             
                             if (markedRecords.size == totalClasses) {
@@ -1155,6 +1167,17 @@ fun CustomCalendarWidget(
                 }
             }
             
+            if (multiSelectEnabled) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "To select/deselect the date long press on date... and confirm",
+                    color = Color.LightGray.copy(alpha = 0.7f),
+                    fontSize = 11.sp,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            }
+            
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1169,6 +1192,215 @@ fun CustomCalendarWidget(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun AppPermissionsSection() {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    val notificationManager = remember { context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager }
+    val alarmManager = remember { context.getSystemService(Context.ALARM_SERVICE) as AlarmManager }
+
+    var hasDndPermission by remember { mutableStateOf(notificationManager.isNotificationPolicyAccessGranted) }
+    var hasNotifPermission by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            } else {
+                NotificationManagerCompat.from(context).areNotificationsEnabled()
+            }
+        )
+    }
+    var hasAlarmPermission by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) alarmManager.canScheduleExactAlarms() else true
+        )
+    }
+    var hasCalendarPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var hasMediaPermission by remember {
+        mutableStateOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
+            } else {
+                ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+            }
+        )
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasDndPermission = notificationManager.isNotificationPolicyAccessGranted
+                hasNotifPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+                } else {
+                    NotificationManagerCompat.from(context).areNotificationsEnabled()
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    hasAlarmPermission = alarmManager.canScheduleExactAlarms()
+                }
+                hasCalendarPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED &&
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
+                hasMediaPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
+                } else {
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 24.dp)) {
+        HorizontalDivider()
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("App Permissions Required / Used", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF2196F3))
+        Spacer(modifier = Modifier.height(4.dp))
+        Text("Manage all permissions required by Classora. Toggle ON to grant or OFF to open system settings to revoke.", fontSize = 12.sp, color = Color.Gray, lineHeight = 16.sp)
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // DND Access
+        PermissionStatusRow(
+            title = "Do Not Disturb (DND) Access",
+            subtitle = "Used for automatic silent mode during classes & exams",
+            isGranted = hasDndPermission,
+            onToggle = { wantAllow ->
+                if (!wantAllow) {
+                    Toast.makeText(context, "Turn OFF DND access for Classora in system settings to revoke", Toast.LENGTH_LONG).show()
+                }
+                val intent = Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).apply {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        data = Uri.fromParts("package", context.packageName, null)
+                    }
+                }
+                try {
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+                }
+            }
+        )
+
+        // Notification Permission
+        PermissionStatusRow(
+            title = "App Notifications",
+            subtitle = "Used to post reminder alerts, task updates & info notifications",
+            isGranted = hasNotifPermission,
+            onToggle = { wantAllow ->
+                if (!wantAllow) {
+                    Toast.makeText(context, "Turn OFF notifications for Classora in system settings to revoke", Toast.LENGTH_LONG).show()
+                }
+                val intent = Intent().apply {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        action = Settings.ACTION_APP_NOTIFICATION_SETTINGS
+                        putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                    } else {
+                        action = Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                        data = Uri.fromParts("package", context.packageName, null)
+                    }
+                }
+                context.startActivity(intent)
+            }
+        )
+
+        // Exact Alarm Permission
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            PermissionStatusRow(
+                title = "Alarms & Reminders",
+                subtitle = "Used for precise timing of reminders & class silent mode",
+                isGranted = hasAlarmPermission,
+                onToggle = { wantAllow ->
+                    if (!wantAllow) {
+                        Toast.makeText(context, "Turn OFF Alarms & Reminders for Classora in system settings to revoke", Toast.LENGTH_LONG).show()
+                    }
+                    val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                        data = Uri.fromParts("package", context.packageName, null)
+                    }
+                    context.startActivity(intent)
+                }
+            )
+        }
+
+        // Calendar Permission
+        PermissionStatusRow(
+            title = "Calendar Sync",
+            subtitle = "Used to sync your timetable & tasks to device calendar",
+            isGranted = hasCalendarPermission,
+            onToggle = { wantAllow ->
+                if (!wantAllow) {
+                    Toast.makeText(context, "Turn OFF Calendar permission for Classora in app settings to revoke", Toast.LENGTH_LONG).show()
+                }
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", context.packageName, null)
+                }
+                context.startActivity(intent)
+            }
+        )
+
+        // Photos / Document Vault Access
+        PermissionStatusRow(
+            title = "Photos & Document Access",
+            subtitle = "Used for storing profile picture & college documents",
+            isGranted = hasMediaPermission,
+            onToggle = { wantAllow ->
+                if (!wantAllow) {
+                    Toast.makeText(context, "Turn OFF Storage/Photos permission in app settings to revoke", Toast.LENGTH_LONG).show()
+                }
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", context.packageName, null)
+                }
+                context.startActivity(intent)
+            }
+        )
+    }
+}
+
+@Composable
+fun PermissionStatusRow(
+    title: String,
+    subtitle: String,
+    isGranted: Boolean,
+    onToggle: (Boolean) -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F9FA)),
+        border = BorderStroke(1.dp, Color(0xFFEEEEEE))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                Text(title, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFF0D1724))
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(subtitle, fontSize = 11.sp, color = Color.Gray, lineHeight = 15.sp)
+            }
+            Switch(
+                checked = isGranted,
+                onCheckedChange = onToggle,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = Color(0xFF4CAF50),
+                    uncheckedThumbColor = Color.White,
+                    uncheckedTrackColor = Color(0xFFE0E0E0)
+                )
+            )
         }
     }
 }

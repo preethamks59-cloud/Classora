@@ -59,22 +59,41 @@ fun AddTimetableScreen(onBack: () -> Unit) {
     fun detectDuplicate(newEntries: List<TimetableEntry>, versions: List<TimetableVersion>): Boolean {
         return versions.any { version ->
             version.entries.size == newEntries.size && 
-            version.entries.all { old -> newEntries.any { it.subject == old.subject && it.day == old.day && it.time == old.time } }
+            version.entries.all { old -> 
+                newEntries.any { 
+                    it.subject.equals(old.subject, ignoreCase = true) && 
+                    it.day.equals(old.day, ignoreCase = true) && 
+                    it.time.equals(old.time, ignoreCase = true) 
+                } 
+            }
         }
     }
 
     fun processNewTimetable(entries: List<TimetableEntry>) {
+        val cleanEntries = entries.map {
+            it.copy(
+                subject = it.subject.trim(),
+                day = it.day.trim(),
+                time = it.time.trim()
+            )
+        }.filter { it.subject.isNotEmpty() && it.day.isNotEmpty() }
+
+        if (cleanEntries.isEmpty()) {
+            Toast.makeText(context, "No valid timetable entries found in CSV.", Toast.LENGTH_LONG).show()
+            return
+        }
+
         scope.launch {
             val versions = attendancePreferences.timetableVersionsFlow.first()
             if (versions.isEmpty()) {
                 // First time user, skip dialog and save directly
                 val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                attendancePreferences.saveTimetableVersion(TimetableVersion(entries = entries, startDate = today))
+                attendancePreferences.saveTimetableVersion(TimetableVersion(entries = cleanEntries, startDate = today))
                 Toast.makeText(context, "Timetable saved successfully!", Toast.LENGTH_SHORT).show()
                 onBack()
             } else {
-                isDuplicate = detectDuplicate(entries, versions)
-                pendingEntries = entries
+                isDuplicate = detectDuplicate(cleanEntries, versions)
+                pendingEntries = cleanEntries
                 shouldClearAttendanceData = false // Reset checkbox state
                 showOptionsDialog = true
             }
@@ -99,13 +118,13 @@ fun AddTimetableScreen(onBack: () -> Unit) {
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            if (isDuplicate) Icons.Default.History else Icons.Default.EditCalendar,
+                            Icons.Default.EditCalendar,
                             contentDescription = null,
-                            tint = if (isDuplicate) Color(0xFF4CAF50) else Color(0xFF2196F3)
+                            tint = Color(0xFF2196F3)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Text(
-                            text = if (isDuplicate) "Existing Timetable Found" else "Timetable Settings",
+                            text = "Apply Timetable Changes",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold
                         )
@@ -113,15 +132,13 @@ fun AddTimetableScreen(onBack: () -> Unit) {
                     
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = if (isDuplicate) 
-                            "This timetable has been used before. Would you like to reset it to start fresh from today, or just continue with your current records?"
-                            else "How would you like to apply these changes to your schedule?",
+                        text = "How would you like to apply these new timetable entries to your app?",
                         fontSize = 14.sp, color = Color.Gray, lineHeight = 20.sp
                     )
                     
                     Spacer(modifier = Modifier.height(20.dp))
 
-                    // The "Clear All" Checkbox requested by user
+                    // The "Clear All" Checkbox
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -145,80 +162,45 @@ fun AddTimetableScreen(onBack: () -> Unit) {
 
                     Spacer(modifier = Modifier.height(20.dp))
 
-                    if (isDuplicate) {
-                        OptionButton("Reset from Today", "Start a new tracking period today", Icons.Default.Refresh) {
-                            scope.launch {
-                                if (shouldClearAttendanceData) attendancePreferences.clearAttendance()
-                                val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                                attendancePreferences.saveTimetableVersion(TimetableVersion(entries = pendingEntries, startDate = today, name = "Timetable Reset"))
-                                Toast.makeText(context, "Attendance reset for today", Toast.LENGTH_SHORT).show()
-                                showOptionsDialog = false
-                                onBack()
+                    OptionButton("Update Active Timetable", "Overwrite current timetable with these new classes", Icons.Default.EditCalendar) {
+                        scope.launch {
+                            if (shouldClearAttendanceData) attendancePreferences.clearAttendance()
+                            val versions = attendancePreferences.timetableVersionsFlow.first().toMutableList()
+                            if (versions.isNotEmpty()) {
+                                val lastIndex = versions.size - 1
+                                versions[lastIndex] = versions[lastIndex].copy(entries = pendingEntries)
+                                attendancePreferences.updateTimetableVersions(versions)
+                            } else {
+                                attendancePreferences.saveTimetableVersion(TimetableVersion(entries = pendingEntries, startDate = "2000-01-01"))
                             }
+                            Toast.makeText(context, "Timetable updated successfully!", Toast.LENGTH_SHORT).show()
+                            showOptionsDialog = false
+                            onBack()
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OptionButton("Continue with Existing", "Just keep things as they are", Icons.Default.PlayArrow) {
-                            scope.launch {
-                                if (shouldClearAttendanceData) {
-                                    attendancePreferences.clearAttendance()
-                                    Toast.makeText(context, "Attendance data cleared", Toast.LENGTH_SHORT).show()
-                                }
-                                showOptionsDialog = false
-                                onBack()
-                            }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    OptionButton("Start New Semester", "Clear attendance and start fresh with this schedule", Icons.Default.School) {
+                        scope.launch {
+                            attendancePreferences.clearAttendance()
+                            attendancePreferences.updateTimetableVersions(listOf(TimetableVersion(entries = pendingEntries, startDate = "2000-01-01", name = "New Semester")))
+                            Toast.makeText(context, "New semester started!", Toast.LENGTH_SHORT).show()
+                            showOptionsDialog = false
+                            onBack()
                         }
-                    } else {
-                        OptionButton("It is a new sem...", "Start fresh for a new semester", Icons.Default.School) {
-                            scope.launch {
-                                attendancePreferences.clearAttendance()
-                                val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                                attendancePreferences.saveTimetableVersion(TimetableVersion(entries = pendingEntries, startDate = today, name = "New Semester"))
-                                Toast.makeText(context, "New semester started!", Toast.LENGTH_SHORT).show()
-                                showOptionsDialog = false
-                                onBack()
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OptionButton("Continue New Attendance", "Start tracking these classes from today", Icons.Default.FiberNew) {
-                            scope.launch {
-                                if (shouldClearAttendanceData) attendancePreferences.clearAttendance()
-                                val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                                attendancePreferences.saveTimetableVersion(TimetableVersion(entries = pendingEntries, startDate = today))
-                                showOptionsDialog = false
-                                onBack()
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OptionButton("Edit Old Timetable", "Update current version without archiving", Icons.Default.Edit) {
-                             scope.launch {
-                                 if (shouldClearAttendanceData) attendancePreferences.clearAttendance()
-                                 val versions = attendancePreferences.timetableVersionsFlow.first().toMutableList()
-                                 if (versions.isNotEmpty()) {
-                                     val lastIndex = versions.size - 1
-                                     versions[lastIndex] = versions[lastIndex].copy(entries = pendingEntries)
-                                     attendancePreferences.updateTimetableVersions(versions)
-                                 } else {
-                                     attendancePreferences.saveTimetableVersion(TimetableVersion(entries = pendingEntries, startDate = "2000-01-01"))
-                                 }
-                                 showOptionsDialog = false
-                                 onBack()
-                             }
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OptionButton("Attach with Old Data", "Merge history with new schedule", Icons.Default.Link) {
-                             scope.launch {
-                                 if (shouldClearAttendanceData) attendancePreferences.clearAttendance()
-                                 val versions = attendancePreferences.timetableVersionsFlow.first().toMutableList()
-                                 if (versions.isNotEmpty()) {
-                                     val lastIndex = versions.size - 1
-                                     versions[lastIndex] = versions[lastIndex].copy(entries = pendingEntries)
-                                     attendancePreferences.updateTimetableVersions(versions)
-                                 } else {
-                                     attendancePreferences.saveTimetableVersion(TimetableVersion(entries = pendingEntries, startDate = "2000-01-01"))
-                                 }
-                                 showOptionsDialog = false
-                                 onBack()
-                             }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    OptionButton("Apply From Today Onwards", "Keep past attendance history, use new schedule starting today", Icons.Default.FiberNew) {
+                        scope.launch {
+                            if (shouldClearAttendanceData) attendancePreferences.clearAttendance()
+                            val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                            attendancePreferences.saveTimetableVersion(TimetableVersion(entries = pendingEntries, startDate = today, name = "New Schedule"))
+                            Toast.makeText(context, "New schedule active from today!", Toast.LENGTH_SHORT).show()
+                            showOptionsDialog = false
+                            onBack()
                         }
                     }
                     

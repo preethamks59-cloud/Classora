@@ -36,10 +36,15 @@ import com.example.classora.data.UserData
 import com.example.classora.data.UserPreferences
 import com.example.classora.ui.components.CustomCalendarDialog
 import com.example.classora.ui.components.ProfileImage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.tooling.preview.Preview
+import java.io.File
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.UUID
 
 @Preview(showBackground = true)
 @Composable
@@ -70,7 +75,30 @@ fun OnboardingScreen(onContinue: () -> Unit, isEditing: Boolean = false) {
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        uri?.let { profileImageUri = it.toString() }
+        uri?.let { selectedUri ->
+            scope.launch {
+                try {
+                    val copiedUri = withContext(Dispatchers.IO) {
+                        val directory = File(context.filesDir, "profile_photos")
+                        if (!directory.exists() && !directory.mkdirs()) {
+                            throw IOException("Unable to create profile photo storage")
+                        }
+                        val destination = File(directory, "profile-${UUID.randomUUID()}.img")
+                        val input = context.contentResolver.openInputStream(selectedUri)
+                            ?: throw IOException("Unable to read selected profile photo")
+                        input.use { source ->
+                            destination.outputStream().use { output -> source.copyTo(output) }
+                        }
+                        Uri.fromFile(destination).toString()
+                    }
+                    profileImageUri = copiedUri
+                } catch (e: IOException) {
+                    Toast.makeText(context, "Unable to save the selected profile photo.", Toast.LENGTH_LONG).show()
+                } catch (e: SecurityException) {
+                    Toast.makeText(context, "Access to the selected profile photo was denied.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     val engineeringCourses = listOf(
@@ -406,7 +434,7 @@ fun OnboardingScreen(onContinue: () -> Unit, isEditing: Boolean = false) {
                     PersonalTextField(
                         label = "Class",
                         value = className,
-                        onValueChange = { className = it },
+                        onValueChange = { if (it.length <= 25) className = it },
                         placeholder = "Section/Class",
                         icon = Icons.Default.Class,
                         isOptional = true

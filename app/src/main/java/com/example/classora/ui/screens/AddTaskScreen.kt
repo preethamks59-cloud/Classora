@@ -460,7 +460,8 @@ fun AddTaskScreen(
                                 message = newTask.description.ifBlank { "You have a task scheduled now." },
                                 date = rawDate,
                                 time = time,
-                                repeatType = repeat
+                                repeatType = repeat,
+                                reminder = reminder
                             )
                         }
 

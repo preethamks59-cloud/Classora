@@ -28,7 +28,8 @@ class BootReceiver : BroadcastReceiver() {
                         message = task.description.ifBlank { "You have a task scheduled now." },
                         date = task.date,
                         time = task.time,
-                        repeatType = task.repeatType
+                        repeatType = task.repeatType,
+                        reminder = task.reminder
                     )
                 }
 

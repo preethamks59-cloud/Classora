@@ -27,33 +27,60 @@ class InfoPreferences(private val context: Context) {
         allInfo.filter { it.id !in deletedIds }
     }
 
-    suspend fun saveInfoNotifications(newInfo: List<InfoNotification>): List<InfoNotification> {
-        // Read once to check if there are actually new items
-        val preferences = context.infoDataStore.data.first()
-        val currentJson = preferences[infoKey] ?: "[]"
-        val type = object : TypeToken<MutableList<InfoNotification>>() {}.type
-        val currentList: MutableList<InfoNotification> = gson.fromJson(currentJson, type)
-        
-        val actualNewItems = newInfo.filter { item -> currentList.none { it.id == item.id } }
-        if (actualNewItems.isEmpty()) return emptyList()
+    val deletedInfoFlow: Flow<List<InfoNotification>> = context.infoDataStore.data.map { preferences ->
+        val json = preferences[infoKey] ?: "[]"
+        val type = object : TypeToken<List<InfoNotification>>() {}.type
+        val allInfo: List<InfoNotification> = gson.fromJson(json, type)
+        val deletedIds = preferences[deletedKey] ?: emptySet()
+        allInfo.filter { it.id in deletedIds }
+    }
 
+    suspend fun syncInfoNotifications(remoteInfo: List<InfoNotification>): List<InfoNotification> {
         val newlyAdded = mutableListOf<InfoNotification>()
+        
         context.infoDataStore.edit { editPrefs ->
-            val notifiedIds = editPrefs[notifiedKey] ?: emptySet()
-            val deletedIds = editPrefs[deletedKey] ?: emptySet()
+            val currentJson = editPrefs[infoKey] ?: "[]"
+            val type = object : TypeToken<MutableList<InfoNotification>>() {}.type
+            val localList: MutableList<InfoNotification> = gson.fromJson(currentJson, type)
             
-            actualNewItems.forEach { item ->
-                currentList.add(0, item)
-                if (item.id !in notifiedIds && item.id !in deletedIds) {
-                    newlyAdded.add(item)
+            val notifiedIds = (editPrefs[notifiedKey] ?: emptySet()).toMutableSet()
+            val deletedIds = (editPrefs[deletedKey] ?: emptySet()).toMutableSet()
+
+            // 1. Remove items that are no longer in the remote source
+            val remoteIds = remoteInfo.map { it.id }.toSet()
+            val iterator = localList.iterator()
+            while (iterator.hasNext()) {
+                val item = iterator.next()
+                if (item.id !in remoteIds) {
+                    iterator.remove()
+                    deletedIds.remove(item.id)
+                    notifiedIds.remove(item.id)
                 }
             }
-            
-            // Keep only latest 100
-            val limitedList = if (currentList.size > 100) currentList.take(100) else currentList
+
+            // 2. Add new items from remote
+            remoteInfo.forEach { remoteItem ->
+                if (localList.none { it.id == remoteItem.id }) {
+                    localList.add(0, remoteItem)
+                    if (remoteItem.id !in deletedIds) {
+                        newlyAdded.add(remoteItem)
+                    }
+                }
+            }
+
+            // 3. Save back
+            val limitedList = if (localList.size > 150) localList.take(150) else localList
             editPrefs[infoKey] = gson.toJson(limitedList)
+            editPrefs[deletedKey] = deletedIds
+            editPrefs[notifiedKey] = notifiedIds
         }
+        
         return newlyAdded
+    }
+
+    // Keep legacy method for compatibility if needed, but redirects to sync
+    suspend fun saveInfoNotifications(newInfo: List<InfoNotification>): List<InfoNotification> {
+        return syncInfoNotifications(newInfo)
     }
 
     suspend fun markAsNotified(ids: List<String>) {
@@ -77,6 +104,14 @@ class InfoPreferences(private val context: Context) {
         context.infoDataStore.edit { preferences ->
             val deletedIds = (preferences[deletedKey] ?: emptySet()).toMutableSet()
             deletedIds.remove(id)
+            preferences[deletedKey] = deletedIds
+        }
+    }
+
+    suspend fun restoreMultipleInfo(ids: Set<String>) {
+        context.infoDataStore.edit { preferences ->
+            val deletedIds = (preferences[deletedKey] ?: emptySet()).toMutableSet()
+            deletedIds.removeAll(ids)
             preferences[deletedKey] = deletedIds
         }
     }

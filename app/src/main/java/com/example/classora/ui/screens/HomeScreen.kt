@@ -55,10 +55,11 @@ fun HomeScreen(
     var selectedViewDate by remember { mutableStateOf(Calendar.getInstance()) }
     
     val activeVersion = remember(timetableVersions, selectedViewDate) {
+        if (timetableVersions.isEmpty()) return@remember null
         val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(selectedViewDate.time)
         val applicable = timetableVersions.filter { it.startDate <= dateStr }
-        if (applicable.isNotEmpty()) applicable.maxByOrNull { it.startDate }
-        else timetableVersions.minByOrNull { it.startDate }
+        if (applicable.isNotEmpty()) applicable.last()
+        else timetableVersions.last()
     }
     
     // Dynamic Greeting State

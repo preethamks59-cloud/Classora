@@ -31,6 +31,8 @@ import com.example.classora.data.AttendancePreferences
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import com.example.classora.data.InfoNotification
 import com.example.classora.data.InfoPreferences
@@ -77,7 +79,9 @@ fun NotificationsScreen(onBack: () -> Unit, rescheduleTaskId: String? = null) {
     val allTasks by taskPreferences.tasksFlow.collectAsState(initial = emptyList())
     val attendanceRecords by attendancePreferences.attendanceFlow.collectAsState(initial = emptyList())
     val allInfo by infoPreferences.infoFlow.collectAsState(initial = emptyList())
+    val deletedInfo by infoPreferences.deletedInfoFlow.collectAsState(initial = emptyList())
 
+    var showDeletedInfoDialog by remember { mutableStateOf(false) }
     var isFetchingInfo by remember { mutableStateOf(false) }
     var networkError by remember { mutableStateOf<String?>(null) }
 
@@ -121,6 +125,19 @@ fun NotificationsScreen(onBack: () -> Unit, rescheduleTaskId: String? = null) {
     LaunchedEffect(Unit) {
         userPreferences.setHasUnreadNotifications(false)
         notificationPreferences.clearAll() 
+    }
+
+    if (showDeletedInfoDialog) {
+        RecentlyDeletedInfoDialog(
+            deletedItems = deletedInfo,
+            onDismiss = { showDeletedInfoDialog = false },
+            onRestore = { ids ->
+                scope.launch {
+                    infoPreferences.restoreMultipleInfo(ids)
+                    showDeletedInfoDialog = false
+                }
+            }
+        )
     }
 
     if (showDatePicker) {
@@ -184,7 +201,7 @@ fun NotificationsScreen(onBack: () -> Unit, rescheduleTaskId: String? = null) {
                                     taskPreferences.saveTask(updatedTask)
                                     NotificationScheduler.scheduleNotification(
                                         context, updatedTask.id, updatedTask.title, updatedTask.description,
-                                        updatedTask.date, updatedTask.time, updatedTask.repeatType
+                                        updatedTask.date, updatedTask.time, updatedTask.repeatType, updatedTask.reminder
                                     )
                                     showTimePicker = false
                                     selectedTaskToReschedule = null
@@ -196,8 +213,6 @@ fun NotificationsScreen(onBack: () -> Unit, rescheduleTaskId: String? = null) {
             }
         }
     }
-
-    var showSlogan by remember { mutableStateOf(true) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -229,64 +244,45 @@ fun NotificationsScreen(onBack: () -> Unit, rescheduleTaskId: String? = null) {
                 .statusBarsPadding()
                 .padding(bottom = paddingValues.calculateBottomPadding())
         ) {
+            var showTopMenu by remember { mutableStateOf(false) }
+
             // Custom Header instead of TopAppBar to avoid double inset padding
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 0.dp, bottom = 4.dp, start = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(top = 0.dp, bottom = 4.dp, start = 4.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color(0xFF0D1724))
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color(0xFF0D1724))
+                    }
+                    Text(
+                        text = "Notifications",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0D1724),
+                        modifier = Modifier.padding(start = 8.dp)
+                    )
                 }
-                Text(
-                    text = "Notifications",
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF0D1724),
-                    modifier = Modifier.padding(start = 8.dp)
-                )
-            }
-
-            if (showSlogan) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    color = Color(0xFFFFF9C4), // Light yellow/gold background
-                    shape = RoundedCornerShape(8.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFD600).copy(alpha = 0.5f))
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                Box {
+                    IconButton(onClick = { showTopMenu = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "More options", tint = Color(0xFF0D1724))
+                    }
+                    DropdownMenu(
+                        expanded = showTopMenu,
+                        onDismissRequest = { showTopMenu = false },
+                        modifier = Modifier.background(Color.White)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.AutoAwesome,
-                            contentDescription = null,
-                            tint = Color(0xFFFF6D00), // Vibrant orange
-                            modifier = Modifier.size(16.dp)
+                        DropdownMenuItem(
+                            text = { Text("Restore Deleted Info") },
+                            onClick = {
+                                showTopMenu = false
+                                showDeletedInfoDialog = true
+                            },
+                            leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null, tint = Color(0xFF2196F3)) }
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Real-time updates are enabled. You'll receive important info instantly.",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color(0xFFE65100), // Deep orange
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(
-                            onClick = { showSlogan = false },
-                            modifier = Modifier.size(20.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Dismiss",
-                                tint = Color(0xFFE65100).copy(alpha = 0.6f),
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
                     }
                 }
             }
@@ -364,16 +360,10 @@ fun NotificationsScreen(onBack: () -> Unit, rescheduleTaskId: String? = null) {
                                                 infoPreferences.restoreInfo(deletedItem.id)
                                             }
                                         }
-                                        true
-                                    } else false
+                                    }
+                                    false
                                 }
                             )
-                            
-                            LaunchedEffect(info.id) {
-                                if (dismissState.currentValue != SwipeToDismissBoxValue.Settled) {
-                                    dismissState.reset()
-                                }
-                            }
 
                             SwipeToDismissBox(
                                 state = dismissState,
@@ -386,7 +376,17 @@ fun NotificationsScreen(onBack: () -> Unit, rescheduleTaskId: String? = null) {
                                     }
                                 }
                             ) {
-                                InfoItemCard(info)
+                                InfoItemCard(
+                                    info = info,
+                                    onDelete = {
+                                        scope.launch {
+                                            infoPreferences.deleteInfo(info.id)
+                                        }
+                                    },
+                                    onRestorePageOpen = {
+                                        showDeletedInfoDialog = true
+                                    }
+                                )
                             }
                         }
                     }
@@ -430,7 +430,7 @@ fun NotificationsScreen(onBack: () -> Unit, rescheduleTaskId: String? = null) {
                                                     taskPreferences.saveTask(deletedTask)
                                                     NotificationScheduler.scheduleNotification(
                                                         context, deletedTask.id, deletedTask.title, deletedTask.description,
-                                                        deletedTask.date, deletedTask.time, deletedTask.repeatType
+                                                        deletedTask.date, deletedTask.time, deletedTask.repeatType, deletedTask.reminder
                                                     )
                                                 }
                                             } catch (e: Exception) {
@@ -457,7 +457,7 @@ fun NotificationsScreen(onBack: () -> Unit, rescheduleTaskId: String? = null) {
                                                         taskPreferences.saveTask(originalTask)
                                                         NotificationScheduler.scheduleNotification(
                                                             context, originalTask.id, originalTask.title, originalTask.description,
-                                                            originalTask.date, originalTask.time, originalTask.repeatType
+                                                            originalTask.date, originalTask.time, originalTask.repeatType, originalTask.reminder
                                                         )
                                                     }
                                                 } catch (e: Exception) {
@@ -730,7 +730,11 @@ fun getTaskVisuals(task: Task): Triple<ImageVector, Color, Color> {
 }
 
 @Composable
-fun InfoItemCard(info: InfoNotification) {
+fun InfoItemCard(
+    info: InfoNotification,
+    onDelete: () -> Unit,
+    onRestorePageOpen: () -> Unit
+) {
     val context = LocalContext.current
     var isExpanded by remember { mutableStateOf(false) }
     val showReadMore = info.message.length > 150
@@ -747,7 +751,7 @@ fun InfoItemCard(info: InfoNotification) {
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                 Box(
                     modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFFE3F2FD)),
                     contentAlignment = Alignment.Center
@@ -760,7 +764,8 @@ fun InfoItemCard(info: InfoNotification) {
                         info.title,
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
-                        color = Color(0xFF0D1724)
+                        color = Color(0xFF0D1724),
+                        modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     // The description is now more prominent
@@ -886,5 +891,143 @@ fun EmptyState(message: String = "No notifications yet", subMessage: String = "S
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             modifier = Modifier.padding(horizontal = 24.dp)
         )
+    }
+}
+
+@Composable
+fun RecentlyDeletedInfoDialog(
+    deletedItems: List<InfoNotification>,
+    onDismiss: () -> Unit,
+    onRestore: (Set<String>) -> Unit
+) {
+    var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.9f)
+                .fillMaxHeight(0.7f),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White)
+        ) {
+            Column(modifier = Modifier.padding(24.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Recently Deleted Info", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = Color(0xFF0D1724))
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+                
+                Text(
+                    "Long press to select and restore items to your feed.",
+                    fontSize = 12.sp,
+                    color = Color.Gray,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                
+                Box(modifier = Modifier.weight(1f)) {
+                    if (deletedItems.isEmpty()) {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(Icons.Default.DeleteOutline, null, modifier = Modifier.size(48.dp), tint = Color.LightGray)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("No deleted notifications", color = Color.Gray, fontSize = 14.sp)
+                        }
+                    } else {
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            contentPadding = PaddingValues(vertical = 8.dp)
+                        ) {
+                            items(deletedItems) { item ->
+                                val isSelected = selectedIds.contains(item.id)
+                                DeletedInfoItem(
+                                    info = item,
+                                    isSelected = isSelected,
+                                    onToggleSelect = {
+                                        selectedIds = if (isSelected) selectedIds - item.id else selectedIds + item.id
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Cancel")
+                    }
+                    Button(
+                        onClick = { if (selectedIds.isNotEmpty()) onRestore(selectedIds) },
+                        modifier = Modifier.weight(1f),
+                        enabled = selectedIds.isNotEmpty(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3))
+                    ) {
+                        Text("Restore (${selectedIds.size})")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DeletedInfoItem(
+    info: InfoNotification,
+    isSelected: Boolean,
+    onToggleSelect: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .pointerInput(info.id) {
+                detectTapGestures(
+                    onLongPress = { onToggleSelect() },
+                    onTap = { onToggleSelect() }
+                )
+            },
+        shape = RoundedCornerShape(12.dp),
+        color = if (isSelected) Color(0xFFE3F2FD) else Color(0xFFF5F5F5),
+        border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2196F3)) else null
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(if (isSelected) Color(0xFF2196F3) else Color.LightGray.copy(alpha = 0.3f)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (isSelected) {
+                    Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                } else {
+                    Icon(Icons.Default.Info, null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+                }
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(info.title, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1)
+                Text(info.message, fontSize = 12.sp, color = Color.Gray, maxLines = 1)
+            }
+        }
     }
 }

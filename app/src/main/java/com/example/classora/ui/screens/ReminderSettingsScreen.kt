@@ -1,7 +1,19 @@
 package com.example.classora.ui.screens
 
+import android.Manifest
+import android.app.AlarmManager
+import android.app.NotificationManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -11,10 +23,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.example.classora.data.SettingsPreferences
+import com.example.classora.ui.components.AppPermissionsSection
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,7 +72,7 @@ fun ReminderSettingsScreen(onBack: () -> Unit, onAddTask: () -> Unit) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color(0xFF0D1724))
                 }
                 Text(
-                    text = "Reminder Settings",
+                    text = "General Settings",
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF0D1724),
@@ -106,6 +124,8 @@ fun ReminderSettingsScreen(onBack: () -> Unit, onAddTask: () -> Unit) {
                     checked = settings.snoozeEnabled,
                     onCheckedChange = { scope.launch { settingsPreferences.updateReminderSetting("snooze", it) } }
                 )
+
+                AppPermissionsSection()
             }
         }
     }
@@ -118,7 +138,7 @@ fun ReminderTypeItem(label: String, checked: Boolean, onCheckedChange: (Boolean)
             .fillMaxWidth()
             .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
-        androidx.compose.ui.Alignment.CenterVertically
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
     ) {
         Text(label, fontSize = 15.sp, color = Color(0xFF0D1724))
         Switch(

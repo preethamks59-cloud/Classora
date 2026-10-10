@@ -74,9 +74,9 @@ fun MainScreen() {
     var showAboutSheet by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        // Handle result if needed
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        // Handle runtime permissions result if needed
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -167,10 +167,12 @@ fun MainScreen() {
         startDestination = if (userData.name.isEmpty()) {
             Screen.Onboarding.route
         } else {
-            // Ask for notification permission after login process (if returning to Home)
+            // Ask for core app permissions after login process (if returning to Home)
+            val reqPermissions = mutableListOf<String>()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                reqPermissions.add(Manifest.permission.POST_NOTIFICATIONS)
             }
+            permissionLauncher.launch(reqPermissions.toTypedArray())
             Screen.Home.route
         }
 
@@ -212,7 +214,9 @@ fun MainScreen() {
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet(
-                modifier = Modifier.fillMaxWidth(0.8f),
+                modifier = Modifier
+                    .fillMaxWidth(0.75f)
+                    .widthIn(max = 340.dp),
                 drawerContainerColor = Color.White,
                 drawerShape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp)
             ) {
@@ -316,7 +320,7 @@ fun MainScreen() {
                             } else {
                                 // Request notification permission immediately after completing onboarding
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                    permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
                                 }
 
                                 navController.navigate(Screen.Home.route) {

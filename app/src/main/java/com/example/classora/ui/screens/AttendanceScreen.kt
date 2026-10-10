@@ -70,75 +70,45 @@ fun AttendanceScreen(
 
         val applicableVersions = timetableVersions.filter { it.startDate <= selectedDateStr }
         if (applicableVersions.isNotEmpty()) {
-            applicableVersions.maxByOrNull { it.startDate }
+            applicableVersions.last()
         } else {
-            // If no version exists for the selected date, show the earliest one available
-            // instead of the latest one, to avoid confusion on old dates.
-            timetableVersions.minByOrNull { it.startDate }
+            timetableVersions.last()
         }
     }
 
     val selectedDayClasses = activeVersion?.entries?.filter { entry ->
-        val dayInput = entry.day.trim().lowercase()
-        val todayFull = dayOfWeek.lowercase()
-        val todayShort = dayOfWeek.take(3).lowercase()
-        
-        val effectiveDow = when (todayFull) {
-            "monday" -> Calendar.MONDAY
-            "tuesday" -> Calendar.TUESDAY
-            "wednesday" -> Calendar.WEDNESDAY
-            "thursday" -> Calendar.THURSDAY
-            "friday" -> Calendar.FRIDAY
-            "saturday" -> Calendar.SATURDAY
-            "sunday" -> Calendar.SUNDAY
-            else -> selectedDate.get(Calendar.DAY_OF_WEEK)
-        }
-        
-        val isWeekday = effectiveDow in Calendar.MONDAY..Calendar.FRIDAY
-        val isWeekend = effectiveDow == Calendar.SATURDAY || effectiveDow == Calendar.SUNDAY
-        
-        when {
-            dayInput.contains("everyday") || dayInput.contains("daily") || dayInput.contains("all days") -> true
-            
-            dayInput.contains("weekday") || 
-            dayInput.contains("mon-fri") || 
-            dayInput.contains("mon to fri") ||
-            dayInput.contains("monday-friday") ||
-            dayInput.contains("monday to friday") -> isWeekday
-            
-            dayInput.contains("weekend") ||
-            dayInput.contains("sat-sun") ||
-            dayInput.contains("saturday-sunday") ||
-            dayInput.contains("sat to sun") -> isWeekend
-            
-            else -> {
-                // More robust matching for specific days and common abbreviations
-                val matches = when (effectiveDow) {
-                    Calendar.MONDAY -> listOf("monday", "mon", " m ")
-                    Calendar.TUESDAY -> listOf("tuesday", "tue", " tu ")
-                    Calendar.WEDNESDAY -> listOf("wednesday", "wed", " w ")
-                    Calendar.THURSDAY -> listOf("thursday", "thu", " th ")
-                    Calendar.FRIDAY -> listOf("friday", "fri", " f ")
-                    Calendar.SATURDAY -> listOf("saturday", "sat", " sa ")
-                    Calendar.SUNDAY -> listOf("sunday", "sun", " su ")
-                    else -> emptyList()
-                }
-                matches.any { dayInput.contains(it) } || dayInput.contains(todayFull) || dayInput.contains(todayShort)
-            }
-        }
+        com.example.classora.utils.CSVParser.matchesDay(entry.day, dayOfWeek, selectedDate)
     } ?: emptyList()
     
     val subjectStats = remember(activeVersion, attendanceRecords) {
-        val subjects = activeVersion?.entries?.map { it.subject }?.distinct() ?: emptyList()
-        subjects.map { subject ->
-            val presentCount = attendanceRecords.count { it.subject == subject && it.isPresent && it.timetableVersionId == activeVersion?.id }
-            val totalCount = attendanceRecords.count { it.subject == subject && it.timetableVersionId == activeVersion?.id }
+        val versionEntries = activeVersion?.entries ?: emptyList()
+        val versionId = activeVersion?.id
+
+        val timetableSubjects = versionEntries.map { it.subject.trim() }
+        val recordedSubjects = attendanceRecords
+            .filter { it.timetableVersionId == null || it.timetableVersionId == versionId }
+            .map { it.subject.trim() }
+
+        val allSubjects = (timetableSubjects + recordedSubjects)
+            .filter { it.isNotEmpty() }
+            .distinctBy { it.lowercase() }
+
+        allSubjects.map { subject ->
+            val presentCount = attendanceRecords.count { 
+                it.subject.trim().equals(subject, ignoreCase = true) && 
+                it.isPresent && 
+                (it.timetableVersionId == null || it.timetableVersionId == versionId) 
+            }
+            val totalCount = attendanceRecords.count { 
+                it.subject.trim().equals(subject, ignoreCase = true) && 
+                (it.timetableVersionId == null || it.timetableVersionId == versionId) 
+            }
             SubjectAttendance(subject, presentCount, totalCount)
         }.sortedByDescending { it.percentage }
     }
     
     val overallPercentage = if (activeVersion != null) {
-        val versionRecords = attendanceRecords.filter { it.timetableVersionId == activeVersion.id }
+        val versionRecords = attendanceRecords.filter { it.timetableVersionId == null || it.timetableVersionId == activeVersion.id }
         if (versionRecords.isNotEmpty()) {
             (versionRecords.count { it.isPresent }.toFloat() / versionRecords.size) * 100
         } else 100f
@@ -246,8 +216,8 @@ fun AttendanceScreen(
                 onMenuClick = onMenuClick,
                 onProfileClick = onProfileClick,
                 onNotificationsClick = onNotificationsClick,
-                titleIcon = Icons.Default.Info,
-                onTitleIconClick = { showArchiveInfo = true }
+                titleIcon = if (timetableVersions.isNotEmpty()) Icons.Default.Info else null,
+                onTitleIconClick = { if (timetableVersions.isNotEmpty()) showArchiveInfo = true }
             )
         }
         item { Spacer(modifier = Modifier.height(24.dp)) }
@@ -385,7 +355,7 @@ fun AttendanceScreen(
                         Button(
                             onClick = {
                                 scope.launch {
-                                    val records = selectedDayClasses.map { AttendanceRecord(selectedDateStr, it.subject, true, activeVersion?.id) }
+                                    val records = selectedDayClasses.map { AttendanceRecord(selectedDateStr, it.subject.trim(), true, activeVersion?.id) }
                                     attendancePreferences.markAllAttendance(records)
                                 }
                             },
@@ -398,7 +368,7 @@ fun AttendanceScreen(
                         Button(
                             onClick = {
                                 scope.launch {
-                                    val records = selectedDayClasses.map { AttendanceRecord(selectedDateStr, it.subject, false, activeVersion?.id) }
+                                    val records = selectedDayClasses.map { AttendanceRecord(selectedDateStr, it.subject.trim(), false, activeVersion?.id) }
                                     attendancePreferences.markAllAttendance(records)
                                 }
                             },
@@ -413,18 +383,18 @@ fun AttendanceScreen(
                 item { Spacer(modifier = Modifier.height(16.dp)) }
                 
                 items(selectedDayClasses) { entry ->
-                    val record = attendanceRecords.find { it.date == selectedDateStr && it.subject == entry.subject }
+                    val record = attendanceRecords.find { it.date == selectedDateStr && it.subject.trim().equals(entry.subject.trim(), ignoreCase = true) }
                     AttendanceClassItem(
                         entry = entry,
                         status = record?.isPresent,
                         onPresent = {
                             scope.launch {
-                                attendancePreferences.markAttendance(AttendanceRecord(selectedDateStr, entry.subject, true, activeVersion?.id))
+                                attendancePreferences.markAttendance(AttendanceRecord(selectedDateStr, entry.subject.trim(), true, activeVersion?.id))
                             }
                         },
                         onAbsent = {
                             scope.launch {
-                                attendancePreferences.markAttendance(AttendanceRecord(selectedDateStr, entry.subject, false, activeVersion?.id))
+                                attendancePreferences.markAttendance(AttendanceRecord(selectedDateStr, entry.subject.trim(), false, activeVersion?.id))
                             }
                         }
                     )
